@@ -4,7 +4,7 @@ libexec_PROGRAMS = \
 	xdg-app-gtk-portal \
 	$(NULL)
 
-portaldir = $(pkgdatadir)/portals
+portaldir = $(datadir)/xdg-app/portals
 portal_DATA = gtk.portal
 
 dbus_built_sources = xdg-app-portal-dbus.c xdg-app-portal-dbus.h
