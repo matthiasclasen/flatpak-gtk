@@ -8,6 +8,10 @@
 #include <gio/gio.h>
 #include "xdg-app-portal-dbus.h"
 
+#ifdef GDK_WINDOWING_X11
+#include <gdk/gdkx.h>
+#endif
+
 static GMainLoop *loop = NULL;
 
 static gboolean opt_verbose;
@@ -185,16 +189,35 @@ handle_file_chooser_open_file (XdgAppDesktopFileChooserBackend *object,
                                GVariant *arg_options)
 {
   GtkWidget *dialog;
+  GdkWindow *foreign_parent = NULL;
+  GtkWidget *fake_parent;
   DialogHandle *handle;
   XdgAppDesktopFileChooserBackend *chooser = XDG_APP_DESKTOP_FILE_CHOOSER_BACKEND (g_dbus_method_invocation_get_user_data (invocation));
 
   g_print ("open file, app_id: %s, object: %p, user_data: %p\n", arg_app_id, object,
            g_dbus_method_invocation_get_user_data (invocation));
 
-  dialog = gtk_file_chooser_dialog_new (arg_title, NULL, GTK_FILE_CHOOSER_ACTION_OPEN,
+  fake_parent = gtk_window_new (GTK_WINDOW_TOPLEVEL);
+  g_object_ref_sink (fake_parent);
+  dialog = gtk_file_chooser_dialog_new (arg_title, GTK_WINDOW (fake_parent), GTK_FILE_CHOOSER_ACTION_OPEN,
                                         "_Cancel", GTK_RESPONSE_CANCEL,
                                         "_Open", GTK_RESPONSE_OK,
                                         NULL);
+  g_object_unref (fake_parent);
+
+#ifdef GDK_WINDOWING_X11
+  if (g_str_has_prefix (arg_parent_window, "x11:"))
+    {
+      int xid;
+
+      if (sscanf (arg_parent_window, "x11:%x", &xid) != 1)
+        g_warning ("invalid xid");
+      else
+        foreign_parent = gdk_x11_window_foreign_new_for_display (gtk_widget_get_display (dialog), xid);
+    }
+#endif
+  else
+    g_warning ("Unhandled parent window type %s\n", arg_parent_window);
 
   gtk_file_chooser_set_do_overwrite_confirmation (GTK_FILE_CHOOSER (dialog),
                                                   TRUE);
@@ -205,6 +228,11 @@ handle_file_chooser_open_file (XdgAppDesktopFileChooserBackend *object,
 
   g_signal_connect (G_OBJECT (dialog), "response",
                     G_CALLBACK (handle_file_chooser_open_file_response), handle);
+
+  gtk_widget_realize (dialog);
+
+  if (foreign_parent)
+    gdk_window_set_transient_for (gtk_widget_get_window (dialog), foreign_parent);
 
   gtk_widget_show (dialog);
 
