@@ -164,7 +164,7 @@ handle_file_chooser_open_file_response (GtkWidget *widget,
 
   dialog_handler_emit_response (handle,
                                 "org.freedesktop.portal.FileChooserBackend",
-                                "OpenFilesResponse",
+                                "OpenFileResponse",
                                 g_variant_new ("(sous@a{sv})",
                                                handle->sender,
                                                handle->id,
