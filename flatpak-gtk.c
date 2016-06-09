@@ -193,15 +193,23 @@ handle_file_chooser_open_file (FlatpakDesktopFileChooser *object,
   GtkWidget *fake_parent;
   DialogHandle *handle;
   FlatpakDesktopFileChooser *chooser = FLATPAK_DESKTOP_FILE_CHOOSER (g_dbus_method_invocation_get_user_data (invocation));
+  const char *cancel_label;
+  const char *accept_label;
 
   g_print ("open file, app_id: %s, object: %p, user_data: %p\n", arg_app_id, object,
            g_dbus_method_invocation_get_user_data (invocation));
 
   fake_parent = gtk_window_new (GTK_WINDOW_TOPLEVEL);
   g_object_ref_sink (fake_parent);
+
+  if (!g_variant_lookup (arg_options, "cancel_label", "&s", &cancel_label))
+    cancel_label = "_Cancel";
+  if (!g_variant_lookup (arg_options, "accept_label", "&s", &accept_label))
+    accept_label = "_Open";
+
   dialog = gtk_file_chooser_dialog_new (arg_title, GTK_WINDOW (fake_parent), GTK_FILE_CHOOSER_ACTION_OPEN,
-                                        "_Cancel", GTK_RESPONSE_CANCEL,
-                                        "_Open", GTK_RESPONSE_OK,
+                                        cancel_label, GTK_RESPONSE_CANCEL,
+                                        accept_label, GTK_RESPONSE_OK,
                                         NULL);
   g_object_unref (fake_parent);
 
