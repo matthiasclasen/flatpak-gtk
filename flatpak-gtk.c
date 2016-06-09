@@ -6,7 +6,7 @@
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
-#include "xdg-app-portal-dbus.h"
+#include "flatpak-portal-dbus.h"
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
@@ -105,7 +105,7 @@ dialog_handle_verify_call (GDBusMethodInvocation *invocation,
     return handle;
 
   g_dbus_method_invocation_return_dbus_error (invocation,
-                                              "org.freedesktop.XdgApp.NotFound",
+                                              "org.freedesktop.Flatpak.Error.NotFound",
                                               "No such handle");
   return NULL;
 }
@@ -167,7 +167,7 @@ handle_file_chooser_open_file_response (GtkWidget *widget,
   options = g_variant_new_array (G_VARIANT_TYPE ("{sv}"), NULL, 0);
 
   dialog_handler_emit_response (handle,
-                                "org.freedesktop.portal.FileChooserBackend",
+                                "org.freedesktop.impl.portal.FileChooser",
                                 "OpenFileResponse",
                                 g_variant_new ("(sous@a{sv})",
                                                handle->sender,
@@ -180,7 +180,7 @@ handle_file_chooser_open_file_response (GtkWidget *widget,
 }
 
 static gboolean
-handle_file_chooser_open_file (XdgAppDesktopFileChooserBackend *object,
+handle_file_chooser_open_file (FlatpakDesktopFileChooser *object,
                                GDBusMethodInvocation *invocation,
                                const gchar *arg_sender,
                                const gchar *arg_app_id,
@@ -192,7 +192,7 @@ handle_file_chooser_open_file (XdgAppDesktopFileChooserBackend *object,
   GdkWindow *foreign_parent = NULL;
   GtkWidget *fake_parent;
   DialogHandle *handle;
-  XdgAppDesktopFileChooserBackend *chooser = XDG_APP_DESKTOP_FILE_CHOOSER_BACKEND (g_dbus_method_invocation_get_user_data (invocation));
+  FlatpakDesktopFileChooser *chooser = FLATPAK_DESKTOP_FILE_CHOOSER (g_dbus_method_invocation_get_user_data (invocation));
 
   g_print ("open file, app_id: %s, object: %p, user_data: %p\n", arg_app_id, object,
            g_dbus_method_invocation_get_user_data (invocation));
@@ -236,15 +236,15 @@ handle_file_chooser_open_file (XdgAppDesktopFileChooserBackend *object,
 
   gtk_widget_show (dialog);
 
-  xdg_app_desktop_file_chooser_backend_complete_open_file (chooser,
-                                                           invocation,
-                                                           handle->id);
+  flatpak_desktop_file_chooser_complete_open_file (chooser,
+                                                   invocation,
+                                                   handle->id);
 
   return TRUE;
 }
 
 static gboolean
-handle_file_chooser_close (XdgAppDesktopFileChooserBackend *object,
+handle_file_chooser_close (FlatpakDesktopFileChooser *object,
                            GDBusMethodInvocation *invocation,
                            const gchar *arg_sender,
                            const gchar *arg_app_id,
@@ -253,11 +253,11 @@ handle_file_chooser_close (XdgAppDesktopFileChooserBackend *object,
   DialogHandle *handle;
 
   handle = dialog_handle_verify_call (invocation, arg_sender, arg_app_id, arg_handle,
-                                      XDG_APP_DESKTOP_TYPE_FILE_CHOOSER_BACKEND_SKELETON);
+                                      FLATPAK_DESKTOP_TYPE_FILE_CHOOSER_SKELETON);
   if (handle != NULL)
     {
       dialog_handle_close (handle);
-      xdg_app_desktop_file_chooser_backend_complete_close (object, invocation);
+      flatpak_desktop_file_chooser_complete_close (object, invocation);
     }
 
   return TRUE;
@@ -269,10 +269,10 @@ on_bus_acquired (GDBusConnection *connection,
                  const gchar     *name,
                  gpointer         user_data)
 {
-  XdgAppDesktopFileChooserBackend *helper;
+  FlatpakDesktopFileChooser *helper;
   GError *error = NULL;
 
-  helper = xdg_app_desktop_file_chooser_backend_skeleton_new ();
+  helper = flatpak_desktop_file_chooser_skeleton_new ();
 
   g_signal_connect (helper, "handle-open-file", G_CALLBACK (handle_file_chooser_open_file), NULL);
   g_signal_connect (helper, "handle-close", G_CALLBACK (handle_file_chooser_close), NULL);
@@ -292,7 +292,7 @@ on_name_acquired (GDBusConnection *connection,
                   const gchar     *name,
                   gpointer         user_data)
 {
-  g_debug ("org.freedesktop.portal_backend.desktop.gtk acquired");
+  g_debug ("org.freedesktop.impl.portal.desktop.gtk acquired");
 }
 
 static void
@@ -341,7 +341,7 @@ main (int argc, char *argv[])
     }
 
   owner_id = g_bus_own_name (G_BUS_TYPE_SESSION,
-                             "org.freedesktop.portal_backend.desktop.gtk",
+                             "org.freedesktop.impl.portal.desktop.gtk",
                              G_BUS_NAME_OWNER_FLAGS_ALLOW_REPLACEMENT | (opt_replace ? G_BUS_NAME_OWNER_FLAGS_REPLACE : 0),
                              on_bus_acquired,
                              on_name_acquired,

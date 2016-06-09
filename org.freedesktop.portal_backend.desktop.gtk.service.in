@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=org.freedesktop.portal_backend.desktop.gtk
-Exec=@libexecdir@/xdg-app-gtk-portal
