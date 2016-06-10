@@ -240,6 +240,8 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
   GtkWidget *fake_parent;
   DialogHandle *handle;
   FlatpakDesktopFileChooser *chooser = FLATPAK_DESKTOP_FILE_CHOOSER (g_dbus_method_invocation_get_user_data (invocation));
+  const char *cancel_label;
+  const char *accept_label;
 
   method_name = g_dbus_method_invocation_get_method_name (invocation);
 
@@ -258,9 +260,14 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
   else if (strcmp (method_name, "OpenFiles") == 0)
     multiple = TRUE;
 
+  if (!g_variant_lookup (arg_options, "cancel_label", "&s", &cancel_label))
+    cancel_label = "_Cancel";
+  if (!g_variant_lookup (arg_options, "accept_label", "&s", &accept_label))
+    accept_label = "_Open";
+
   dialog = gtk_file_chooser_dialog_new (arg_title, GTK_WINDOW (fake_parent), action,
-                                        "_Cancel", GTK_RESPONSE_CANCEL,
-                                        "_Open", GTK_RESPONSE_OK,
+                                        cancel_label, GTK_RESPONSE_CANCEL,
+                                        accept_label, GTK_RESPONSE_OK,
                                         NULL);
   gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_OK);
   gtk_file_chooser_set_select_multiple (GTK_FILE_CHOOSER (dialog), multiple);
