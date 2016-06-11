@@ -329,6 +329,40 @@ convert_uris (gpointer data)
     }
 }
 
+GtkFileFilter *
+gtk_file_filter_from_gvariant (GVariant *variant)
+{
+  GtkFileFilter *filter;
+  GVariantIter *iter;
+  const char *name;
+  int type;
+  char *tmp;
+
+  filter = gtk_file_filter_new ();
+
+  g_variant_get (variant, "(&sa(us))", &name, &iter);
+
+  gtk_file_filter_set_name (filter, name);
+
+  while (g_variant_iter_next (iter, "(u&s)", &type, &tmp))
+    {
+      switch (type)
+        {
+        case 0:
+          gtk_file_filter_add_pattern (filter, tmp);
+          break;
+        case 1:
+          gtk_file_filter_add_mime_type (filter, tmp);
+          break;
+        default:
+          break;
+       }
+    }
+  g_variant_iter_free (iter);
+
+  return filter;
+}
+
 static void
 handle_file_chooser_open_response (GtkWidget *widget,
                                    int response,
@@ -379,6 +413,7 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
   FlatpakDesktopFileChooser *chooser = FLATPAK_DESKTOP_FILE_CHOOSER (g_dbus_method_invocation_get_user_data (invocation));
   const char *cancel_label;
   const char *accept_label;
+  GVariantIter *iter;
 
   method_name = g_dbus_method_invocation_get_method_name (invocation);
 
@@ -408,6 +443,21 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
                                         NULL);
   gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_OK);
   gtk_file_chooser_set_select_multiple (GTK_FILE_CHOOSER (dialog), multiple);
+
+  if (g_variant_lookup (arg_options, "filters", "a(sa(us))", &iter))
+    {
+      GVariant *variant;
+
+      while (g_variant_iter_next (iter, "@(sa(us))", &variant))
+        {
+          GtkFileFilter *filter;
+
+          filter = gtk_file_filter_from_gvariant (variant);
+          gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (dialog), filter);
+          g_variant_unref (variant);
+        }
+      g_variant_iter_free (iter);
+    }
 
   g_object_unref (fake_parent);
 
