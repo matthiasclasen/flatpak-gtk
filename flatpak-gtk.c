@@ -49,6 +49,9 @@ typedef struct {
   GSList *uris;
 
   GDBusInterfaceSkeleton *skeleton;
+
+  gboolean allow_write;
+
 } DialogHandle;
 
 static DialogHandle *
@@ -72,6 +75,8 @@ dialog_handle_new (const char *app_id,
   handle->sender = g_strdup (sender);
   handle->dialog = g_object_ref (dialog);
   handle->skeleton = g_object_ref (skeleton);
+
+  handle->allow_write = TRUE;
 
   g_hash_table_insert (outstanding_handles, handle->id, handle);
 
@@ -228,8 +233,9 @@ convert_one_uri (DialogHandle *handle,
   int fd, fd_in;
   g_autoptr(GFile) file = NULL;
   gboolean ret;
-  const char const* permissions[] = { "read", "write", "grant", NULL };
+  const char *permissions[5];
   g_autofree char *fuse_path = NULL;
+  int i;
 
   if (app_can_access (handle, uri))
     {
@@ -260,6 +266,13 @@ convert_one_uri (DialogHandle *handle,
 
   if (fd_in == -1)
     goto out;
+
+  i = 0;
+  permissions[i++] = "read";
+  if (!handle->allow_write)
+    permissions[i++] = "write";
+  permissions[i++] = "grant";
+  permissions[i++] = NULL;
 
   if (handle->action == GTK_FILE_CHOOSER_ACTION_SAVE)
     ret = xdp_dbus_documents_call_add_named_sync (documents,
@@ -394,6 +407,14 @@ handle_file_chooser_open_response (GtkWidget *widget,
   g_idle_add (convert_uris, handle);
 }
 
+static void
+read_only_toggled (GtkToggleButton *button, gpointer user_data)
+{
+  DialogHandle *handle = user_data;
+
+  handle->allow_write = !gtk_toggle_button_get_active (button);
+}
+
 static gboolean
 handle_file_chooser_open (FlatpakDesktopFileChooser *object,
                           GDBusMethodInvocation *invocation,
@@ -493,6 +514,19 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
 
   g_signal_connect (G_OBJECT (dialog), "response",
                     G_CALLBACK (handle_file_chooser_open_response), handle);
+
+  if (action == GTK_FILE_CHOOSER_ACTION_OPEN)
+    {
+      GtkWidget *readonly;
+
+      readonly = gtk_check_button_new_with_label ("Open files read-only");
+      gtk_widget_show (readonly);
+
+      g_signal_connect (readonly, "toggled",
+                        G_CALLBACK (read_only_toggled), handle);
+
+      gtk_file_chooser_set_extra_widget (GTK_FILE_CHOOSER (dialog), readonly);
+    }
 
   gtk_widget_realize (dialog);
 
