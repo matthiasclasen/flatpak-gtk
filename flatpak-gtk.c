@@ -414,6 +414,8 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
   const char *cancel_label;
   const char *accept_label;
   GVariantIter *iter;
+  const char *current_name;
+  const char *path;
 
   method_name = g_dbus_method_invocation_get_method_name (invocation);
 
@@ -458,6 +460,12 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
         }
       g_variant_iter_free (iter);
     }
+  if (g_variant_lookup (arg_options, "current_name", "&s", &current_name))
+    gtk_file_chooser_set_current_name (GTK_FILE_CHOOSER (dialog), current_name);
+  if (g_variant_lookup (arg_options, "current_folder", "&ay", &path))
+    gtk_file_chooser_set_current_folder (GTK_FILE_CHOOSER (dialog), path);
+  if (g_variant_lookup (arg_options, "current_file", "&ay", &path))
+    gtk_file_chooser_select_filename (GTK_FILE_CHOOSER (dialog), path);
 
   g_object_unref (fake_parent);
 
