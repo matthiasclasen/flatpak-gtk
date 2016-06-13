@@ -18,6 +18,17 @@ $(dbus_built_sources): Makefile.am
 	 $(FLATPAK_INTERFACES_DIR)/org.freedesktop.impl.portal.FileChooser.xml \
 	$(NULL)
 
+app_built_sources = app-portal-dbus.c app-portal-dbus.h
+BUILT_SOURCES += $(app_built_sources)
+
+$(app_built_sources): Makefile.am
+	$(AM_V_GEN) $(GDBUS_CODEGEN)			\
+	--interface-prefix org.freedesktop.impl.portal.	\
+	--c-namespace FlatpakDesktop			\
+	--generate-c-code app-portal-dbus		\
+	$(FLATPAK_INTERFACES_DIR)/org.freedesktop.impl.portal.AppChooser.xml \
+	$(NULL)
+
 %.service: %.service.in config.log
 	$(AM_V_GEN) $(SED) -e "s|\@libexecdir\@|$(libexecdir)|" $< > $@
 
@@ -44,7 +55,10 @@ flatpak_gtk_portal_SOURCES = \
 	flatpak-gtk.c		\
 	filechooser.h		\
 	filechooser.c		\
+	appchooser.h		\
+	appchooser.c		\
 	$(dbus_built_sources)	\
+	$(app_built_sources)	\
 	$(xdp_dbus_built_sources)	\
 	$(NULL)
 

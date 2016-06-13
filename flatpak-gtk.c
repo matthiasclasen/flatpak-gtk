@@ -12,9 +12,11 @@
 #include <gtk/gtk.h>
 
 #include <gio/gio.h>
+#include <gio/gdesktopappinfo.h>
 #include <gio/gunixfdlist.h>
 
 #include "flatpak-portal-dbus.h"
+#include "app-portal-dbus.h"
 #include "xdp-dbus.h"
 
 #ifdef GDK_WINDOWING_X11
@@ -22,6 +24,8 @@
 #endif
 
 #include "filechooser.h"
+#include "appchooser.h"
+
 
 static GMainLoop *loop = NULL;
 
@@ -55,6 +59,12 @@ on_bus_acquired (GDBusConnection *connection,
   GError *error = NULL;
 
   if (!file_chooser_init (connection, &error))
+    {
+      g_warning ("error: %s\n", error->message);
+      g_clear_error (&error);
+    }
+
+  if (!app_chooser_init (connection, &error))
     {
       g_warning ("error: %s\n", error->message);
       g_clear_error (&error);
