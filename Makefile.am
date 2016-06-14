@@ -52,6 +52,7 @@ $(xdp_dbus_built_sources) : $(DBUS_SERVICE_DIR)/../interfaces/org.freedesktop.po
 
 
 flatpak_gtk_portal_SOURCES = \
+	flatpak-gtk.h		\
 	flatpak-gtk.c		\
 	filechooser.h		\
 	filechooser.c		\

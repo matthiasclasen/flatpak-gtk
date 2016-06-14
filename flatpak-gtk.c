@@ -23,11 +23,13 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include "flatpak-gtk.h"
 #include "filechooser.h"
 #include "appchooser.h"
 
 
 static GMainLoop *loop = NULL;
+static GHashTable *outstanding_handles = NULL;
 
 static gboolean opt_verbose;
 static gboolean opt_replace;
@@ -87,6 +89,49 @@ on_name_lost (GDBusConnection *connection,
   g_main_loop_quit (loop);
 }
 
+DialogHandle *
+dialog_handle_find (const char *arg_sender,
+                    const char *arg_app_id,
+                    const char *arg_handle,
+                    GType skel_type)
+{
+  DialogHandle *handle;
+
+  handle = g_hash_table_lookup (outstanding_handles, arg_handle);
+
+  if (handle != NULL &&
+      (/* App is unconfined */
+       strcmp (arg_app_id, "") == 0 ||
+       /* or same app */
+       strcmp (handle->app_id, arg_app_id) == 0) &&
+      g_type_check_instance_is_a ((GTypeInstance *)handle->skeleton, skel_type))
+    return handle;
+
+  return NULL;
+}
+
+void
+dialog_handle_register (DialogHandle *handle)
+{
+  guint32 r;
+
+  r = g_random_int ();
+  do
+    {
+      g_free (handle->id);
+      handle->id = g_strdup_printf ("/org/freedesktop/portal/desktop/%u", r);
+    }
+  while (g_hash_table_lookup (outstanding_handles, handle->id) != NULL);
+
+  g_hash_table_insert (outstanding_handles, handle->id, handle);
+}
+
+void
+dialog_handle_unregister (DialogHandle *handle)
+{
+  g_hash_table_remove (outstanding_handles, handle->id);
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -116,6 +161,8 @@ main (int argc, char *argv[])
   g_set_prgname (argv[0]);
 
   loop = g_main_loop_new (NULL, FALSE);
+
+  outstanding_handles = g_hash_table_new (g_str_hash, g_str_equal);
 
   session_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);
   if (session_bus == NULL)

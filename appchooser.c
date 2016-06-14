@@ -1,15 +1,11 @@
 #include "appchooser.h"
+#include "flatpak-gtk.h"
 
 #define _GNU_SOURCE 1
 
 #include "config.h"
 
-#include <errno.h>
-#include <locale.h>
 #include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 
 #include <gtk/gtk.h>
 
@@ -26,8 +22,7 @@
 #endif
 
 typedef struct {
-  char *app_id;
-  char *sender;
+  DialogHandle base;
 
   char *uri;
   char *content_type;
@@ -36,7 +31,6 @@ typedef struct {
 
   GtkWidget *dialog;
   GtkWidget *other_app_button;
-  GDBusInterfaceSkeleton *skeleton;
 
 } AppDialogHandle;
 
@@ -48,10 +42,14 @@ app_dialog_handle_new (const char *app_id,
 {
   AppDialogHandle *handle = g_new0 (AppDialogHandle, 1);
 
-  handle->app_id = g_strdup (app_id);
-  handle->sender = g_strdup (sender);
+  handle->base.app_id = g_strdup (app_id);
+  handle->base.sender = g_strdup (sender);
+  handle->base.skeleton = g_object_ref (skeleton);
   handle->dialog = g_object_ref (dialog);
-  handle->skeleton = g_object_ref (skeleton);
+
+  dialog_handle_register (&handle->base);
+
+  /* TODO: Track lifetime of sender and close handle */
 
   return handle;
 }
@@ -59,21 +57,21 @@ app_dialog_handle_new (const char *app_id,
 static void
 app_dialog_handle_free (AppDialogHandle *handle)
 {
-  g_free (handle->app_id);
-  g_free (handle->sender);
+  dialog_handle_unregister (&handle->base);
+  g_free (handle->base.app_id);
+  g_free (handle->base.sender);
+  g_object_unref (handle->base.skeleton);
   g_free (handle->uri);
   g_free (handle->content_type);
   g_clear_object (&handle->default_app_info);
   g_clear_object (&handle->other_app_info);
   g_object_unref (handle->dialog);
-  g_object_unref (handle->skeleton);
   g_free (handle);
 }
 
 static void
 app_dialog_handle_close (AppDialogHandle *handle)
 {
-  g_print ("handle close\n");
   gtk_widget_destroy (handle->dialog);
   app_dialog_handle_free (handle);
 }
@@ -126,6 +124,7 @@ open_uri (AppDialogHandle *handle, GAppInfo *app_info)
   uris.next = NULL;
 
   g_app_info_launch_uris (app_info, &uris, NULL, NULL);
+
   app_dialog_handle_close (handle);
 }
 
@@ -165,6 +164,7 @@ handle_app_chooser_open_uri (FlatpakDesktopAppChooser *object,
                              const gchar *arg_uri,
                              GVariant *arg_options)
 {
+  FlatpakDesktopAppChooser *chooser = FLATPAK_DESKTOP_APP_CHOOSER (g_dbus_method_invocation_get_user_data (invocation));
   GtkWidget *window;
   GtkWidget *header;
   GtkWidget *grid;
@@ -255,8 +255,35 @@ handle_app_chooser_open_uri (FlatpakDesktopAppChooser *object,
 
   gtk_widget_show (window);
 
-  if (invocation)
-    g_dbus_method_invocation_return_value (invocation, NULL);
+  flatpak_desktop_app_chooser_complete_open_uri (chooser, invocation, handle->base.id);
+
+  return TRUE;
+}
+
+static gboolean
+handle_app_chooser_close (FlatpakDesktopAppChooser *object,
+                           GDBusMethodInvocation *invocation,
+                           const gchar *arg_sender,
+                           const gchar *arg_app_id,
+                           const gchar *arg_handle)
+{
+  AppDialogHandle *handle;
+
+
+  handle = (AppDialogHandle *)dialog_handle_find (arg_sender, arg_app_id, arg_handle,
+                                                  FLATPAK_DESKTOP_TYPE_APP_CHOOSER_SKELETON);
+
+  if (handle != NULL)
+    {
+      app_dialog_handle_close (handle);
+      flatpak_desktop_app_chooser_complete_close (object, invocation);
+    }
+  else
+    {
+      g_dbus_method_invocation_return_dbus_error (invocation,
+                                                  "org.freedesktop.Flatpak.Error.NotFound",
+                                                  "No such handle");
+    }
 
   return TRUE;
 }
@@ -270,6 +297,8 @@ app_chooser_init (GDBusConnection *bus,
   helper = G_DBUS_INTERFACE_SKELETON (flatpak_desktop_app_chooser_skeleton_new ());
 
   g_signal_connect (helper, "handle-open-uri", G_CALLBACK (handle_app_chooser_open_uri), NULL);
+  g_signal_connect (helper, "handle-close", G_CALLBACK (handle_app_chooser_close), NULL);
+
 
   if (!g_dbus_interface_skeleton_export (helper,
                                          bus,
