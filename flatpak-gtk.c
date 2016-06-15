@@ -269,7 +269,7 @@ convert_one_uri (DialogHandle *handle,
 
   i = 0;
   permissions[i++] = "read";
-  if (!handle->allow_write)
+  if (handle->allow_write)
     permissions[i++] = "write";
   permissions[i++] = "grant";
   permissions[i++] = NULL;
@@ -437,6 +437,7 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
   GVariantIter *iter;
   const char *current_name;
   const char *path;
+  gboolean request_write;
 
   method_name = g_dbus_method_invocation_get_method_name (invocation);
 
@@ -515,7 +516,10 @@ handle_file_chooser_open (FlatpakDesktopFileChooser *object,
   g_signal_connect (G_OBJECT (dialog), "response",
                     G_CALLBACK (handle_file_chooser_open_response), handle);
 
-  if (action == GTK_FILE_CHOOSER_ACTION_OPEN)
+  if (g_variant_lookup (arg_options, "request_write", "b", &request_write))
+    handle->allow_write = request_write;
+
+  if (action == GTK_FILE_CHOOSER_ACTION_OPEN && handle->allow_write)
     {
       GtkWidget *readonly;
 
