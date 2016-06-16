@@ -23,7 +23,7 @@
 #include <gdk/gdkx.h>
 #endif
 
-#include "appchooser.h"
+#include "filechooser.h"
 
 static XdpDbusDocuments *documents = NULL;
 static char *mountpoint = NULL;
@@ -39,7 +39,6 @@ typedef struct {
   gboolean multiple;
 
   int response;
-  GSList *raw_uris;
   GSList *uris;
 
   GDBusInterfaceSkeleton *skeleton;
@@ -88,7 +87,6 @@ dialog_handle_free (DialogHandle *handle)
   g_free (handle->sender);
   g_object_unref (handle->dialog);
   g_object_unref (handle->skeleton);
-  g_slist_free_full (handle->raw_uris, g_free);
   g_slist_free_full (handle->uris, g_free);
   g_free (handle);
 }
@@ -140,7 +138,12 @@ dialog_handler_emit_response (DialogHandle *handle,
 static void
 send_response (DialogHandle *handle)
 {
-  GVariant *options = g_variant_new_array (G_VARIANT_TYPE ("{sv}"), NULL, 0);
+  GVariantBuilder opt_builder;
+  GVariant *options;
+
+  g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add (&opt_builder, "{sv}", "writable", handle->allow_write);
+  options = g_variant_builder_end (&opt_builder);
 
   if (handle->action == GTK_FILE_CHOOSER_ACTION_SAVE ||
       (handle->action == GTK_FILE_CHOOSER_ACTION_OPEN && !handle->multiple))
@@ -188,139 +191,6 @@ send_response (DialogHandle *handle)
     }
 
   dialog_handle_close (handle);
-}
-
-static gboolean
-app_can_access (DialogHandle *handle,
-                const char *uri)
-{
-  //TODO
-  if (strcmp (handle->app_id, "") == 0)
-    return TRUE;
-  else
-    return FALSE;
-}
-
-static void
-convert_one_uri (DialogHandle *handle,
-                 const char *uri)
-{
-  g_autoptr(GError) error = NULL;
-  g_autofree char *doc_id = NULL;
-  g_autofree char *path = NULL;
-  g_autofree char *basename = NULL;
-  g_autofree char *dirname = NULL;
-  GUnixFDList *fd_list = NULL;
-  int fd, fd_in;
-  g_autoptr(GFile) file = NULL;
-  gboolean ret;
-  const char *permissions[5];
-  g_autofree char *fuse_path = NULL;
-  int i;
-
-  if (app_can_access (handle, uri))
-    {
-      handle->uris = g_slist_prepend (handle->uris, g_strdup (uri));
-      return;
-    }
-
-  file = g_file_new_for_uri (uri);
-  path = g_file_get_path (file);
-  basename = g_path_get_basename (path);
-  dirname = g_path_get_dirname (path);
-
-  if (handle->action == GTK_FILE_CHOOSER_ACTION_SAVE)
-    fd = open (dirname, O_PATH | O_CLOEXEC);
-  else
-    fd = open (path, O_PATH | O_CLOEXEC);
-
-  if (fd == -1)
-    {
-      g_set_error (&error, G_IO_ERROR, g_io_error_from_errno (errno),
-                   "Failed to open %s", uri);
-      goto out;
-    }
-
-  fd_list = g_unix_fd_list_new ();
-  fd_in = g_unix_fd_list_append (fd_list, fd, &error);
-  close (fd);
-
-  if (fd_in == -1)
-    goto out;
-
-  i = 0;
-  permissions[i++] = "read";
-  if (!handle->allow_write)
-    permissions[i++] = "write";
-  permissions[i++] = "grant";
-  permissions[i++] = NULL;
-
-  if (handle->action == GTK_FILE_CHOOSER_ACTION_SAVE)
-    ret = xdp_dbus_documents_call_add_named_sync (documents,
-                                                  g_variant_new_handle (fd_in),
-                                                  basename,
-                                                  TRUE,
-                                                  TRUE,
-                                                  fd_list,
-                                                  &doc_id,
-                                                  NULL,
-                                                  NULL,
-                                                  &error);
-  else
-    ret = xdp_dbus_documents_call_add_sync (documents,
-                                            g_variant_new_handle (fd_in),
-                                            TRUE,
-                                            TRUE,
-                                            fd_list,
-                                            &doc_id,
-                                            NULL,
-                                            NULL,
-                                            &error);
-  g_object_unref (fd_list);
-
-  if (!ret)
-    goto out;
-
-  if (!xdp_dbus_documents_call_grant_permissions_sync (documents,
-                                                       doc_id,
-                                                       handle->app_id,
-                                                       permissions,
-                                                       NULL,
-                                                       &error))
-     goto out;
-
-  fuse_path = g_build_filename (mountpoint, doc_id, basename, NULL);
-  handle->uris = g_slist_prepend (handle->uris, g_strconcat  ("file://", fuse_path, NULL));
-
-out:
-  if (error)
-    g_warning ("Failed to convert %s: %s", uri, error->message);
-}
-
-static gboolean
-convert_uris (gpointer data)
-{
-  DialogHandle *handle = data;
-
-  if (handle->raw_uris)
-    {
-      GSList *first = handle->raw_uris;
-      g_autofree char *uri = first->data;
-
-      handle->raw_uris = first->next;
-      first->next = NULL;
-      g_slist_free_1 (first);
-
-      convert_one_uri (handle, uri);
-
-      return G_SOURCE_CONTINUE;
-    }
-  else
-    {
-      send_response (handle);
-
-      return G_SOURCE_REMOVE;
-    }
 }
 
 GtkFileFilter *
@@ -371,21 +241,21 @@ handle_file_chooser_open_response (GtkWidget *widget,
       /* Fall through */
     case GTK_RESPONSE_DELETE_EVENT:
       handle->response = 2;
-      handle->raw_uris = NULL;
+      handle->uris = NULL;
       break;
 
     case GTK_RESPONSE_CANCEL:
       handle->response = 1;
-      handle->raw_uris = NULL;
+      handle->uris = NULL;
       break;
 
     case GTK_RESPONSE_OK:
       handle->response = 0;
-      handle->raw_uris = gtk_file_chooser_get_uris (GTK_FILE_CHOOSER (widget));
+      handle->uris = gtk_file_chooser_get_uris (GTK_FILE_CHOOSER (widget));
       break;
     }
 
-  g_idle_add (convert_uris, handle);
+  send_response (handle);
 }
 
 static void
