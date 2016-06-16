@@ -26,11 +26,9 @@ typedef struct {
 
   char *uri;
   char *content_type;
-  GAppInfo *default_app_info;
-  GAppInfo *other_app_info;
-
   GtkWidget *dialog;
-  GtkWidget *other_app_button;
+
+  int response;
 
 } AppDialogHandle;
 
@@ -63,8 +61,6 @@ app_dialog_handle_free (AppDialogHandle *handle)
   g_object_unref (handle->base.skeleton);
   g_free (handle->uri);
   g_free (handle->content_type);
-  g_clear_object (&handle->default_app_info);
-  g_clear_object (&handle->other_app_info);
   g_object_unref (handle->dialog);
   g_free (handle);
 }
@@ -76,83 +72,64 @@ app_dialog_handle_close (AppDialogHandle *handle)
   app_dialog_handle_free (handle);
 }
 
-static void update_button_for_other_app (AppDialogHandle *handle);
-
 static void
-app_chooser_response (GtkDialog *dialog,
-                      gint response,
-                      gpointer data)
+send_response (AppDialogHandle *handle)
 {
-  AppDialogHandle *handle = data;
-  switch (response)
-    {
-    case GTK_RESPONSE_OK:
-      {
-        g_autoptr(GAppInfo) app_info = gtk_app_chooser_get_app_info (GTK_APP_CHOOSER (dialog));
-        g_set_object (&handle->other_app_info, app_info);
-        update_button_for_other_app (handle);
-      }
-      break;
-    case GTK_RESPONSE_CANCEL:
-    default:
-      break;
-    }
+  GVariantBuilder opt_builder;
 
-  gtk_widget_destroy (GTK_WIDGET (dialog));
-}
-
-static void
-open_appchooser (GtkButton *button, gpointer data)
-{
-  AppDialogHandle *handle = data;
-  GtkWidget *parent = gtk_widget_get_toplevel (GTK_WIDGET (button));
-  GtkWidget *dialog;
-
-  dialog = gtk_app_chooser_dialog_new_for_content_type (GTK_WINDOW (parent),
-                                                        GTK_DIALOG_MODAL|GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                        handle->content_type);
-  g_signal_connect (dialog, "response", G_CALLBACK (app_chooser_response), handle);
-  gtk_window_present (GTK_WINDOW (dialog));
-}
-
-static void
-open_uri (AppDialogHandle *handle, GAppInfo *app_info)
-{
-  GList uris;
-
-  uris.data = handle->uri;
-  uris.next = NULL;
-
-  g_app_info_launch_uris (app_info, &uris, NULL, NULL);
+  g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
+  
+  g_dbus_connection_emit_signal (g_dbus_interface_skeleton_get_connection (handle->base.skeleton),
+                                 "org.freedesktop.portal.Desktop",
+                                 "/org/freedesktop/portal/desktop",
+                                 "org.freedesktop.portal.AppChooser",
+                                 "OpenURIResponse",
+                                 g_variant_new ("(sou@a{sv})",
+                                                handle->base.sender,
+                                                handle->base.id,
+                                                handle->response,
+                                                g_variant_builder_end (&opt_builder)),
+                                 NULL);
 
   app_dialog_handle_close (handle);
 }
 
 static void
-open_default (GtkButton *button, AppDialogHandle *handle)
+handle_app_chooser_response (GtkDialog *dialog,
+                             gint response,
+                             gpointer data)
 {
-  open_uri (handle, handle->default_app_info);
-}
+  AppDialogHandle *handle = data;
 
-static void
-open_other (GtkButton *button, AppDialogHandle *handle)
-{
-  open_uri (handle, handle->other_app_info);
-}
-
-static void
-update_button_for_other_app (AppDialogHandle *handle)
-{
-  if (handle->other_app_info)
+  switch (response)
     {
-      char *str;
-      str = g_strdup_printf ("Open with %s", g_app_info_get_display_name (handle->other_app_info));
-      gtk_button_set_label (GTK_BUTTON (handle->other_app_button), str);
-      g_free (str);
-      gtk_widget_show (handle->other_app_button);
+    default:
+      g_warning ("Unexpected response: %d", response);
+      /* Fall through */
+    case GTK_RESPONSE_DELETE_EVENT:
+      handle->response = 2;
+      break;
+
+    case GTK_RESPONSE_CANCEL:
+      handle->response = 1;
+      break;
+
+    case GTK_RESPONSE_OK:
+      {
+        GList uris;
+
+        uris.data = handle->uri;
+        uris.next = NULL;
+
+        g_autoptr(GAppInfo) app_info = gtk_app_chooser_get_app_info (GTK_APP_CHOOSER (dialog));
+        g_app_info_launch_uris (app_info, &uris, NULL, NULL);
+
+        handle->response = 0;
+      }
+      break;
     }
-  else
-    gtk_widget_hide (handle->other_app_button);
+
+  send_response (handle);
 }
 
 static gboolean
@@ -165,11 +142,7 @@ handle_app_chooser_open_uri (FlatpakDesktopAppChooser *object,
                              GVariant *arg_options)
 {
   FlatpakDesktopAppChooser *chooser = FLATPAK_DESKTOP_APP_CHOOSER (g_dbus_method_invocation_get_user_data (invocation));
-  GtkWidget *window;
-  GtkWidget *header;
-  GtkWidget *grid;
-  GtkWidget *label;
-  GtkWidget *button;
+  GtkWidget *dialog;
   char *str;
   char *uri_scheme;
   char *content_type;
@@ -179,7 +152,7 @@ handle_app_chooser_open_uri (FlatpakDesktopAppChooser *object,
   g_print ("OpenUri: %s\n", arg_uri);
 
   uri_scheme = g_uri_parse_scheme (arg_uri);
-  if (uri_scheme && uri_scheme[0] != '\0')
+  if (uri_scheme && uri_scheme[0] != '\0' && strcmp (uri_scheme, "file") != 0)
     {
       g_autofree char *scheme_down = g_ascii_strdown (uri_scheme, -1);
       content_type = g_strconcat ("x-scheme-handler/", scheme_down, NULL);
@@ -199,25 +172,9 @@ handle_app_chooser_open_uri (FlatpakDesktopAppChooser *object,
 
   app_info = g_app_info_get_default_for_type (content_type, FALSE);
 
-  window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
-
-  handle = app_dialog_handle_new (arg_app_id, arg_sender, window, G_DBUS_INTERFACE_SKELETON (object));
-
-  g_signal_connect_swapped (window, "delete-event", G_CALLBACK (app_dialog_handle_close), handle);
-
-  handle->uri = g_strdup (arg_uri);
-  handle->content_type = content_type;
-  g_set_object (&handle->default_app_info, app_info);
-
-  header = gtk_header_bar_new ();
-  gtk_widget_show (header);
-  gtk_header_bar_set_title (GTK_HEADER_BAR (header), "Open a URI");
-  gtk_header_bar_set_show_close_button (GTK_HEADER_BAR (header), TRUE);
-  gtk_window_set_titlebar (GTK_WINDOW (window), header);
-
-  grid = gtk_grid_new ();
-  gtk_widget_show (grid);
-  gtk_container_add (GTK_CONTAINER (window), grid);
+  dialog = gtk_app_chooser_dialog_new_for_content_type (NULL,
+                                                        GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                        content_type);
   if (strcmp (arg_app_id, "") == 0)
     {
       str = g_strdup_printf ("An application wants to open %s", arg_uri);
@@ -228,32 +185,16 @@ handle_app_chooser_open_uri (FlatpakDesktopAppChooser *object,
       g_autoptr(GAppInfo) app_info = (GAppInfo *)g_desktop_app_info_new (desktop_id);
       str = g_strdup_printf ("%s wants to open %s", g_app_info_get_display_name (app_info), arg_uri);
     }
-  label = gtk_label_new (str);
-  g_free (str);
-  gtk_widget_show (label);
-  gtk_grid_attach (GTK_GRID (grid), label, 1, 1, 3, 1);
+  gtk_app_chooser_dialog_set_heading (GTK_APP_CHOOSER_DIALOG (dialog), str);
 
-  if (app_info)
-    {
-      str = g_strdup_printf ("Open with %s", g_app_info_get_display_name (app_info));
+  handle = app_dialog_handle_new (arg_app_id, arg_sender, dialog, G_DBUS_INTERFACE_SKELETON (object));
 
-      button = gtk_button_new_with_label (str);
-      g_signal_connect (button, "clicked", G_CALLBACK (open_default), handle);
-      gtk_widget_show (button);
-      gtk_grid_attach (GTK_GRID (grid), button, 1, 2, 1, 1);
-    }
+  g_signal_connect (dialog, "response", G_CALLBACK (handle_app_chooser_response), handle);
 
-  button = gtk_button_new_with_label ("");
-  g_signal_connect (button, "clicked", G_CALLBACK (open_other), handle);
-  gtk_grid_attach (GTK_GRID (grid), button, 1, 3, 1, 1);
-  handle->other_app_button = button;
+  handle->uri = g_strdup (arg_uri);
+  handle->content_type = content_type;
 
-  button = gtk_button_new_with_label ("Choose another application");
-  g_signal_connect (button, "clicked", G_CALLBACK (open_appchooser), handle);
-  gtk_widget_show (button);
-  gtk_grid_attach (GTK_GRID (grid), button, 2, 2, 1, 1);
-
-  gtk_widget_show (window);
+  gtk_window_present (GTK_WINDOW (dialog));
 
   flatpak_desktop_app_chooser_complete_open_uri (chooser, invocation, handle->base.id);
 
